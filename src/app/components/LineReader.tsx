@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Mic, MicOff } from 'lucide-react';
 
 interface Line {
@@ -35,6 +35,7 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState<string>('');
   const [recognition, setRecognition] = useState<any>(null);
+  const currentLineRef = useRef(currentLine);
   const [voiceSettings, setVoiceSettings] = useState({
     rate: 1,
     pitch: 1,
@@ -43,6 +44,11 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
   
   const linesPerPage = 10;
   const totalPages = Math.ceil(script.length / linesPerPage);
+
+  // Keep the ref updated with the latest currentLine value
+  useEffect(() => {
+    currentLineRef.current = currentLine;
+  }, [currentLine]);
 
   useEffect(() => {
     // Load available voices
@@ -69,25 +75,28 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
 
       recognition.onresult = async (event: any) => {
         const spokenText = event.results[0][0].transcript;
-        const currentLineText = script[currentLine].text;
+        const expectedLine = script[currentLineRef.current];
         
-        // Compare spoken text with expected line
-        const similarity = calculateSimilarity(spokenText.toLowerCase(), currentLineText.toLowerCase());
+        console.log('Current line:', currentLineRef.current);
+        console.log('Expected:', expectedLine.text);
+        console.log('Got:', spokenText);
         
-        if (similarity > 0.7) { // 70% match threshold
+        const similarity = calculateSimilarity(spokenText.toLowerCase(), expectedLine.text.toLowerCase());
+        
+        if (similarity > 0.7) {
           setIsListening(false);
-          // First advance to next line
           onNextLine();
-          // Then check if it's an AI line and play it
-          const nextLineIndex = currentLine + 1;
-          if (nextLineIndex < script.length && script[nextLineIndex].character !== userRole) {
-            setTimeout(async () => {
+          
+          // After user's line, automatically play the next AI line after a short delay
+          setTimeout(async () => {
+            const nextLineIndex = currentLineRef.current;
+            if (nextLineIndex < script.length && script[nextLineIndex].character !== userRole) {
               await playLine(script[nextLineIndex].text);
               onNextLine();
-            }, 500);
-          }
+            }
+          }, 100);
         } else {
-          console.log('Try again. Expected:', currentLineText, 'Got:', spokenText);
+          console.log('Try again. Expected:', expectedLine.text, 'Got:', spokenText);
         }
       };
 
@@ -100,7 +109,8 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
     }
 
     // Auto-play first line if it's AI
-    if (script.length > 0 && script[0].character !== userRole) {
+    const firstLine = script[0];
+    if (firstLine && firstLine.character !== userRole) {
       handleNextLine();
     }
   }, []);
@@ -167,26 +177,16 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
 
   const handleNextLine = async () => {
     if (currentLine < script.length && !isPlaying) {
-      setIsPlaying(true);
       const line = script[currentLine];
       
       if (line.character !== userRole) {
+        setIsPlaying(true);
         await playLine(line.text);
+        setIsPlaying(false);
         onNextLine();
-        
-        // Check if next line is also AI and auto-play if it is
-        const nextLine = script[currentLine + 1];
-        if (nextLine && nextLine.character !== userRole) {
-          handleNextLine();
-        }
       } else {
-        onNextLine();
-      }
-      
-      setIsPlaying(false);
-
-      if ((currentLine + 1) >= (currentPage + 1) * linesPerPage) {
-        setCurrentPage(prev => Math.min(prev + 1, totalPages - 1));
+        // If it's user's line, just wait for speech recognition
+        return;
       }
     }
   };
@@ -196,6 +196,13 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
     const end = start + linesPerPage;
     return script.slice(start, end);
   };
+
+  useEffect(() => {
+    // Auto-advance page if needed
+    if (currentLine >= (currentPage + 1) * linesPerPage) {
+      setCurrentPage(prev => Math.min(prev + 1, totalPages - 1));
+    }
+  }, [currentLine]);
 
   return (
     <div className="space-y-6">
@@ -286,7 +293,7 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
         </div>
 
         <div className="flex gap-2 w-full md:w-auto">
-          {script[currentLine].character === userRole && (
+          {script[currentLine]?.character === userRole && (
             <button
               onClick={toggleListening}
               className={`px-6 py-2 rounded-lg flex items-center gap-2 transition-colors ${
@@ -309,25 +316,27 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
             </button>
           )}
           
-          <button
-            onClick={handleNextLine}
-            disabled={currentLine >= script.length || isPlaying || isListening}
-            className="px-6 py-2 bg-[#1a73e8] text-white rounded-lg disabled:opacity-50 
-                     hover:bg-[#1557b0] transition-colors flex items-center gap-2 
-                     flex-1 md:flex-initial justify-center"
-          >
-            {isPlaying ? (
-              <>
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Playing...
-              </>
-            ) : (
-              'Next Line'
-            )}
-          </button>
+          {script[currentLine]?.character !== userRole && (
+            <button
+              onClick={handleNextLine}
+              disabled={currentLine >= script.length || isPlaying || isListening}
+              className="px-6 py-2 bg-[#1a73e8] text-white rounded-lg disabled:opacity-50 
+                       hover:bg-[#1557b0] transition-colors flex items-center gap-2 
+                       flex-1 md:flex-initial justify-center"
+            >
+              {isPlaying ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Playing...
+                </>
+              ) : (
+                'Next Line'
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>
