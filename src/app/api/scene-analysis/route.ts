@@ -37,6 +37,7 @@ Return a breakdown including:
         { role: 'user', content: prompt },
       ],
       temperature: 0.7,
+      max_tokens: 500,
     })
 
     const analysis = chat.choices[0].message.content

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -29,6 +29,8 @@ export default function HomePage() {
   const [isRecording, setIsRecording] = useState(false)
   const [liveTranscription, setLiveTranscription] = useState('')
   const [confirmationMessage, setConfirmationMessage] = useState('')
+  const [requestCount, setRequestCount] = useState(0)
+  const lastRequestTimeRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (step === 'intro') {
@@ -99,10 +101,38 @@ export default function HomePage() {
   }
 
   const handleAnalyze = async () => {
+    const now = Date.now()
+    if (lastRequestTimeRef.current && now - lastRequestTimeRef.current < 10000) {
+      alert('Please wait a few seconds before running another analysis.')
+      return
+    }
+
+    if (requestCount >= 10) {
+      alert('You’ve reached the maximum number of analyses for this session.')
+      return
+    }
+
+    lastRequestTimeRef.current = now
+    setRequestCount(prev => prev + 1)
+
     setLoading(true)
     setAnalysis(null)
-    await new Promise(res => setTimeout(res, 1000))
-    setAnalysis(`🎭 Mock Analysis:\n\nObjective: Connect with the other character\nEmotional arc: Hopeful → Uncertain → Empowered\nTactics: Teasing, questioning, affirming\nSubtext: She's testing the waters emotionally.`)
+    setShowAnalyzer(true)
+    try {
+      const res = await fetch('/api/scene-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script: script.map(l => `${l.character}: ${l.text}`).join('\n') })
+      })
+      const data = await res.json()
+      if (data.error) {
+        setAnalysis('Error: ' + data.error)
+      } else {
+        setAnalysis(data.analysis)
+      }
+    } catch (err) {
+      setAnalysis('An unexpected error occurred.')
+    }
     setLoading(false)
   }
 
@@ -128,8 +158,11 @@ export default function HomePage() {
   const uniqueCharacters = Array.from(new Set(script.map(line => line.character)))
 
   return (
-    <main className="min-h-screen p-6 max-w-4xl mx-auto space-y-6 text-center">
-      <h1 className="text-3xl font-bold mb-4">Alexander</h1>
+    <main className="min-h-screen p-6 max-w-3xl mx-auto space-y-8 text-center bg-[#f7f7f8] text-gray-800">
+      <header className="text-left">
+        <h1 className="text-4xl font-semibold mb-2">Alexander</h1>
+        <p className="text-base text-gray-600">Your rehearsal companion for running lines and scene analysis</p>
+      </header>
 
       {step === 'intro' && <p className="text-lg text-muted-foreground h-20">{typedMessage}</p>}
 
@@ -140,11 +173,7 @@ export default function HomePage() {
             <Button onClick={() => setStep('recordScript')}><Mic className="mr-2 h-4 w-4" /> Record Lines</Button>
             <Button variant="outline" onClick={() => setStep('pasteScript')}>Paste Lines</Button>
           </div>
-          <Button
-            variant="link"
-            className="text-sm"
-            onClick={() => setShowExample(prev => !prev)}
-          >
+          <Button variant="link" className="text-sm" onClick={() => setShowExample(prev => !prev)}>
             {showExample ? 'Hide Formatting Tips' : 'Show Formatting Tips'}
           </Button>
           {showExample && (
@@ -167,37 +196,20 @@ TOM: Cool? She’s amazing.
           <CardContent className="space-y-4">
             <input
               type="text"
-              placeholder="Enter character name"
+              placeholder="Character Name"
+              className="w-full p-2 border rounded"
               value={characterInput}
               onChange={(e) => setCharacterInput(e.target.value)}
-              className="w-full border px-3 py-2 rounded text-black"
             />
-            <Button onClick={handleVoiceLineRecording} disabled={isRecording || !characterInput}>
-              🎙️ {isRecording ? 'Recording...' : 'Record Line'}
+            <Button onClick={handleVoiceLineRecording} disabled={isRecording}>
+              {isRecording ? 'Recording...' : 'Start Recording'}
             </Button>
             {liveTranscription && (
               <div className="bg-gray-100 text-sm p-3 rounded border text-left text-black">
-                <strong>Transcribing:</strong> {liveTranscription}
+                {liveTranscription}
               </div>
             )}
-            {confirmationMessage && (
-              <div className="text-green-600 text-sm font-medium">{confirmationMessage}</div>
-            )}
-            {script.length > 0 && (
-              <div className="space-y-2">
-                <h2 className="text-md font-semibold">Script So Far:</h2>
-                {script.map((line, index) => (
-                  <div key={index} className="border p-2 rounded text-left flex justify-between items-center">
-                    <div><strong>{line.character}:</strong> {line.text}</div>
-                    <div className="flex gap-2">
-                      <Button size="icon" variant="ghost" onClick={() => updateLine(index)}><Pencil className="w-4 h-4" /></Button>
-                      <Button size="icon" variant="ghost" onClick={() => deleteLine(index)}><Trash2 className="w-4 h-4" /></Button>
-                    </div>
-                  </div>
-                ))}
-                <Button variant="ghost" onClick={() => setStep('chooseAction')}>Done Adding Lines</Button>
-              </div>
-            )}
+            {confirmationMessage && <p className="text-green-600 text-sm">{confirmationMessage}</p>}
           </CardContent>
         </Card>
       )}
@@ -220,32 +232,46 @@ TOM: Cool? She’s amazing.
         </Card>
       )}
 
-      {step === 'chooseAction' && script.length > 0 && (
-        <Card className="text-left">
-          <CardHeader>
-            <CardTitle>📝 Your Script</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+      {(step === 'recordScript' || step === 'pasteScript') && script.length > 0 && (
+        <div className="space-y-4">
+          <p className="text-lg">Your Current Script</p>
+          <ul className="space-y-2 text-left">
             {script.map((line, index) => (
-              <div key={index} className="border p-3 rounded text-left flex flex-col gap-2">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <strong>{line.character}:</strong> {line.text}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="icon" variant="ghost" onClick={() => updateLine(index)}><Pencil className="w-4 h-4" /></Button>
-                    <Button size="icon" variant="ghost" onClick={() => deleteLine(index)}><Trash2 className="w-4 h-4" /></Button>
-                  </div>
+              <li key={index} className="border p-3 rounded flex justify-between items-center bg-white">
+                <div>
+                  <strong>{line.character}:</strong> {line.text}
                 </div>
-              </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => updateLine(index)}><Pencil className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="sm" onClick={() => deleteLine(index)}><Trash2 className="w-4 h-4" /></Button>
+                </div>
+              </li>
             ))}
-            <div className="flex justify-center gap-4 mt-4">
-              <Button onClick={() => setShowReader(true)}>🎭 Run Lines</Button>
-              <Button onClick={() => handleAnalyze()} variant="outline">🧠 Analyze Scene</Button>
-            </div>
-            {showReader && (
-              <div className="mt-6">
-                <h3 className="text-lg font-semibold mb-2">Line Reader</h3>
+          </ul>
+          <div className="flex justify-center gap-4">
+            <Button onClick={() => setStep('chooseAction')}>Continue</Button>
+          </div>
+        </div>
+      )}
+
+      {step === 'chooseAction' && script.length > 0 && (
+        <div className="space-y-4">
+          <p className="text-lg">What would you like to do next?</p>
+          <div className="flex justify-center gap-4">
+            <Button onClick={() => setShowReader(true)}>🎭 Run Lines</Button>
+            <Button onClick={handleAnalyze} variant="outline">🧠 Analyze Scene</Button>
+          </div>
+        </div>
+      )}
+
+      {(showReader || showAnalyzer) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {showReader && (
+            <Card>
+              <CardHeader>
+                <CardTitle>🎭 Run Lines</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 text-left">
                 <div className="max-w-md">
                   <label className="block text-sm mb-1 text-muted-foreground">
                     Select Your Role
@@ -271,15 +297,29 @@ TOM: Cool? She’s amazing.
                     onNextLine={() => setCurrentLine(prev => prev + 1)}
                   />
                 )}
-              </div>
-            )}
-            {showAnalyzer && analysis && (
-              <div className="bg-gray-100 p-4 rounded text-sm whitespace-pre-wrap text-black border mt-6">
-                {analysis}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          )}
+
+          {showAnalyzer && (
+            <Card>
+              <CardHeader>
+                <CardTitle>🧠 Analyze Scene</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 text-left">
+                {loading ? (
+                  <p>Analyzing scene...</p>
+                ) : (
+                  analysis && (
+                    <div className="bg-gray-100 p-4 rounded text-sm whitespace-pre-wrap text-black border">
+                      {analysis}
+                    </div>
+                  )
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
     </main>
   )
