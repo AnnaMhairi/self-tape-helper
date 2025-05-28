@@ -60,7 +60,7 @@ export default function HomePage() {
     recognition.interimResults = true
     recognition.maxAlternatives = 1
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = event.results[event.resultIndex][0].transcript.trim()
       setLiveTranscription(transcript)
 
@@ -130,7 +130,7 @@ export default function HomePage() {
       } else {
         setAnalysis(data.analysis)
       }
-    } catch (err) {
+    } catch {
       setAnalysis('An unexpected error occurred.')
     }
     setLoading(false)

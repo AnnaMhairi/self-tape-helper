@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, Mic, MicOff } from 'lucide-react';
 
 interface Line {
@@ -21,9 +21,17 @@ interface Voice extends SpeechSynthesisVoice {
   voiceURI: string;
 }
 
+interface CustomSpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+
+// TODO: ADD OJBECTS, REPLACE UNKNOWN
 declare global {
   interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     webkitSpeechRecognition: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     SpeechRecognition: any;
   }
 }
@@ -73,7 +81,7 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
       recognition.interimResults = false;
       recognition.lang = 'en-US';
 
-      recognition.onresult = async (event: any) => {
+      recognition.onresult = async (event: CustomSpeechRecognitionEvent) => {
         const spokenText = event.results[0][0].transcript;
         const expectedLine = script[currentLineRef.current];
         
@@ -100,6 +108,7 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
         }
       };
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error', event.error);
         setIsListening(false);
@@ -113,7 +122,7 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
     if (firstLine && firstLine.character !== userRole) {
       handleNextLine();
     }
-  }, []);
+  }, [onNextLine, script, userRole]);
 
   const calculateSimilarity = (a: string, b: string) => {
     const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
@@ -156,40 +165,31 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
     }
   };
 
-  const playLine = async (text: string) => {
+  const playLine = useCallback(async (text: string) => {
     const utterance = new SpeechSynthesisUtterance(text);
-    
-    // Apply voice settings
     const voice = voices.find(v => v.name === selectedVoice);
-    if (voice) {
-      utterance.voice = voice;
-    }
+    if (voice) utterance.voice = voice;
     utterance.rate = voiceSettings.rate;
     utterance.pitch = voiceSettings.pitch;
     utterance.volume = voiceSettings.volume;
-    
+
     window.speechSynthesis.speak(utterance);
-    
     return new Promise<void>(resolve => {
       utterance.onend = () => resolve();
     });
-  };
+  }, [selectedVoice, voiceSettings, voices]);
 
-  const handleNextLine = async () => {
+  const handleNextLine = useCallback(async () => {
     if (currentLine < script.length && !isPlaying) {
       const line = script[currentLine];
-      
       if (line.character !== userRole) {
         setIsPlaying(true);
         await playLine(line.text);
         setIsPlaying(false);
         onNextLine();
-      } else {
-        // If it's user's line, just wait for speech recognition
-        return;
       }
     }
-  };
+  }, [currentLine, isPlaying, onNextLine, playLine, script, userRole]);
 
   const getCurrentPageLines = () => {
     const start = currentPage * linesPerPage;

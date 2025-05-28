@@ -43,7 +43,7 @@ Return a breakdown including:
     const analysis = chat.choices[0].message.content
 
     return NextResponse.json({ analysis })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('OpenAI error:', err)
     return NextResponse.json({ error: 'Failed to analyze scene.' }, { status: 500 })
   }
