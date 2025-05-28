@@ -21,18 +21,38 @@ interface Voice extends SpeechSynthesisVoice {
   voiceURI: string;
 }
 
-interface CustomSpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-  resultIndex: number;
+type SpeechRecognitionErrorEvent = Event & {
+  error: string;
+};
+
+type SpeechRecognitionResultList = {
+  [index: number]: SpeechRecognitionResult;
+  length: number;
+};
+
+type CustomSpeechRecognitionEvent = Event & {
+  readonly resultIndex: number;
+  readonly results: SpeechRecognitionResultList;
+};
+
+interface ISpeechRecognition {
+  new (): SpeechRecognitionInstance;
 }
 
-// TODO: ADD OJBECTS, REPLACE UNKNOWN
+interface SpeechRecognitionInstance {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: (event: CustomSpeechRecognitionEvent) => void;
+  onerror: (event: SpeechRecognitionErrorEvent) => void;
+}
+
 declare global {
   interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    webkitSpeechRecognition: any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    SpeechRecognition: any;
+    webkitSpeechRecognition: ISpeechRecognition;
+    SpeechRecognition: ISpeechRecognition;
   }
 }
 
@@ -42,28 +62,47 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
   const [currentPage, setCurrentPage] = useState(0);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState<string>('');
-  const [recognition, setRecognition] = useState<any>(null);
+  const [recognition, setRecognition] = useState<SpeechRecognitionInstance | null>(null);
   const currentLineRef = useRef(currentLine);
-  const [voiceSettings, setVoiceSettings] = useState({
-    rate: 1,
-    pitch: 1,
-    volume: 1
-  });
-  
+  const [voiceSettings, setVoiceSettings] = useState({ rate: 1, pitch: 1, volume: 1 });
+
   const linesPerPage = 10;
   const totalPages = Math.ceil(script.length / linesPerPage);
 
-  // Keep the ref updated with the latest currentLine value
   useEffect(() => {
     currentLineRef.current = currentLine;
   }, [currentLine]);
 
+  const playLine = useCallback(async (text: string) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = voices.find(v => v.name === selectedVoice);
+    if (voice) utterance.voice = voice;
+    utterance.rate = voiceSettings.rate;
+    utterance.pitch = voiceSettings.pitch;
+    utterance.volume = voiceSettings.volume;
+
+    window.speechSynthesis.speak(utterance);
+    return new Promise<void>(resolve => {
+      utterance.onend = () => resolve();
+    });
+  }, [selectedVoice, voiceSettings, voices]);
+
+  const handleNextLine = useCallback(async () => {
+    if (currentLine < script.length && !isPlaying) {
+      const line = script[currentLine];
+      if (line.character !== userRole) {
+        setIsPlaying(true);
+        await playLine(line.text);
+        setIsPlaying(false);
+        onNextLine();
+      }
+    }
+  }, [currentLine, isPlaying, onNextLine, playLine, script, userRole]);
+
   useEffect(() => {
-    // Load available voices
     const loadVoices = () => {
       const availableVoices = window.speechSynthesis.getVoices();
       setVoices(availableVoices);
-      // Set default to first English voice or first available voice
       const defaultVoice = availableVoices.find(voice => voice.lang.startsWith('en')) || availableVoices[0];
       if (defaultVoice) {
         setSelectedVoice(defaultVoice.name);
@@ -71,31 +110,26 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
     };
 
     loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    const handler = () => loadVoices();
+    window.speechSynthesis.addEventListener('voiceschanged', handler);
 
-    // Initialize speech recognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
+      const recognitionInstance = new SpeechRecognition();
+      recognitionInstance.continuous = false;
+      recognitionInstance.interimResults = false;
+      recognitionInstance.lang = 'en-US';
 
-      recognition.onresult = async (event: CustomSpeechRecognitionEvent) => {
+      recognitionInstance.onresult = (event: CustomSpeechRecognitionEvent) => {
         const spokenText = event.results[0][0].transcript;
         const expectedLine = script[currentLineRef.current];
-        
-        console.log('Current line:', currentLineRef.current);
-        console.log('Expected:', expectedLine.text);
-        console.log('Got:', spokenText);
-        
+
         const similarity = calculateSimilarity(spokenText.toLowerCase(), expectedLine.text.toLowerCase());
-        
+
         if (similarity > 0.7) {
           setIsListening(false);
           onNextLine();
-          
-          // After user's line, automatically play the next AI line after a short delay
+
           setTimeout(async () => {
             const nextLineIndex = currentLineRef.current;
             if (nextLineIndex < script.length && script[nextLineIndex].character !== userRole) {
@@ -108,21 +142,24 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
         }
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      recognition.onerror = (event: any) => {
+      recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
         console.error('Speech recognition error', event.error);
         setIsListening(false);
       };
 
-      setRecognition(recognition);
+      setRecognition(recognitionInstance);
     }
 
-    // Auto-play first line if it's AI
     const firstLine = script[0];
     if (firstLine && firstLine.character !== userRole) {
       handleNextLine();
     }
-  }, [onNextLine, script, userRole]);
+
+    return () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', handler);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Intentionally left empty to avoid infinite loop
 
   const calculateSimilarity = (a: string, b: string) => {
     const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
@@ -165,31 +202,11 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
     }
   };
 
-  const playLine = useCallback(async (text: string) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = voices.find(v => v.name === selectedVoice);
-    if (voice) utterance.voice = voice;
-    utterance.rate = voiceSettings.rate;
-    utterance.pitch = voiceSettings.pitch;
-    utterance.volume = voiceSettings.volume;
-
-    window.speechSynthesis.speak(utterance);
-    return new Promise<void>(resolve => {
-      utterance.onend = () => resolve();
-    });
-  }, [selectedVoice, voiceSettings, voices]);
-
-  const handleNextLine = useCallback(async () => {
-    if (currentLine < script.length && !isPlaying) {
-      const line = script[currentLine];
-      if (line.character !== userRole) {
-        setIsPlaying(true);
-        await playLine(line.text);
-        setIsPlaying(false);
-        onNextLine();
-      }
+  useEffect(() => {
+    if (currentLine >= (currentPage + 1) * linesPerPage) {
+      setCurrentPage(prev => Math.min(prev + 1, totalPages - 1));
     }
-  }, [currentLine, isPlaying, onNextLine, playLine, script, userRole]);
+  }, [currentLine, currentPage, totalPages]);
 
   const getCurrentPageLines = () => {
     const start = currentPage * linesPerPage;
@@ -197,36 +214,23 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
     return script.slice(start, end);
   };
 
-  useEffect(() => {
-    // Auto-advance page if needed
-    if (currentLine >= (currentPage + 1) * linesPerPage) {
-      setCurrentPage(prev => Math.min(prev + 1, totalPages - 1));
-    }
-  }, [currentLine]);
-
   return (
     <div className="space-y-6">
-      {/* Voice Settings Panel */}
       <div className="bg-[#f8f9fa] rounded-lg p-4 border">
         <h3 className="text-[#202124] text-lg font-medium mb-4">Voice Settings</h3>
-        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-[#5f6368] text-sm mb-1">Voice</label>
             <select
               value={selectedVoice}
               onChange={(e) => setSelectedVoice(e.target.value)}
-              className="w-full p-2 border rounded-md hover:border-[#1a73e8] 
-                       focus:border-[#1a73e8] focus:outline-none transition-colors"
+              className="w-full p-2 border rounded-md hover:border-[#1a73e8] focus:border-[#1a73e8] focus:outline-none transition-colors"
             >
               {voices.map((voice) => (
-                <option key={voice.name} value={voice.name}>
-                  {voice.name}
-                </option>
+                <option key={voice.name} value={voice.name}>{voice.name}</option>
               ))}
             </select>
           </div>
-
           <div>
             <label className="block text-[#5f6368] text-sm mb-1">Speed</label>
             <input
@@ -235,10 +239,7 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
               max="2"
               step="0.1"
               value={voiceSettings.rate}
-              onChange={(e) => setVoiceSettings(prev => ({
-                ...prev,
-                rate: parseFloat(e.target.value)
-              }))}
+              onChange={(e) => setVoiceSettings(prev => ({ ...prev, rate: parseFloat(e.target.value) }))}
               className="w-full accent-[#1a73e8]"
             />
             <div className="flex justify-between text-xs text-[#5f6368] mt-1">
@@ -250,27 +251,20 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
         </div>
       </div>
 
-      {/* Script Display */}
       <div className="bg-white rounded-lg shadow-sm border p-4 min-h-[400px]">
         {getCurrentPageLines().map((line, index) => {
           const actualIndex = currentPage * linesPerPage + index;
           return (
             <div
               key={actualIndex}
-              className={`p-3 rounded-lg transition-colors ${
-                actualIndex === currentLine ? 'bg-[#e8f0fe]' : ''
-              } ${
-                line.character === userRole ? 'font-medium' : ''
-              }`}
+              className={`p-3 rounded-lg transition-colors ${actualIndex === currentLine ? 'bg-[#e8f0fe]' : ''} ${line.character === userRole ? 'font-medium' : ''}`}
             >
-              <span className="text-[#1a73e8]">{line.character}:</span>{' '}
-              <span className="text-[#202124]">{line.text}</span>
+              <span className="text-[#1a73e8]">{line.character}:</span> <span className="text-[#202124]">{line.text}</span>
             </div>
           );
         })}
       </div>
 
-      {/* Navigation Controls */}
       <div className="flex flex-col md:flex-row justify-between gap-4 items-center">
         <div className="flex items-center gap-2 text-[#5f6368]">
           <button
@@ -280,9 +274,7 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
-          <span>
-            Page {currentPage + 1} of {totalPages}
-          </span>
+          <span>Page {currentPage + 1} of {totalPages}</span>
           <button
             onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages - 1))}
             disabled={currentPage === totalPages - 1}
@@ -296,33 +288,17 @@ export default function LineReader({ script, userRole, currentLine, onNextLine }
           {script[currentLine]?.character === userRole && (
             <button
               onClick={toggleListening}
-              className={`px-6 py-2 rounded-lg flex items-center gap-2 transition-colors ${
-                isListening 
-                  ? 'bg-red-500 text-white hover:bg-red-600' 
-                  : 'bg-[#1a73e8] text-white hover:bg-[#1557b0]'
-              }`}
+              className={`px-6 py-2 rounded-lg flex items-center gap-2 transition-colors ${isListening ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-[#1a73e8] text-white hover:bg-[#1557b0]'}`}
             >
-              {isListening ? (
-                <>
-                  <MicOff className="w-4 h-4" />
-                  Stop Recording
-                </>
-              ) : (
-                <>
-                  <Mic className="w-4 h-4" />
-                  Record Line
-                </>
-              )}
+              {isListening ? <><MicOff className="w-4 h-4" />Stop Recording</> : <><Mic className="w-4 h-4" />Record Line</>}
             </button>
           )}
-          
+
           {script[currentLine]?.character !== userRole && (
             <button
               onClick={handleNextLine}
               disabled={currentLine >= script.length || isPlaying || isListening}
-              className="px-6 py-2 bg-[#1a73e8] text-white rounded-lg disabled:opacity-50 
-                       hover:bg-[#1557b0] transition-colors flex items-center gap-2 
-                       flex-1 md:flex-initial justify-center"
+              className="px-6 py-2 bg-[#1a73e8] text-white rounded-lg disabled:opacity-50 hover:bg-[#1557b0] transition-colors flex items-center gap-2 flex-1 md:flex-initial justify-center"
             >
               {isPlaying ? (
                 <>

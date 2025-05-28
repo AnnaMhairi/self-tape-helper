@@ -58,9 +58,9 @@ export default function HomePage() {
     const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)()
     recognition.lang = 'en-US'
     recognition.interimResults = true
-    recognition.maxAlternatives = 1
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
       const transcript = event.results[event.resultIndex][0].transcript.trim()
       setLiveTranscription(transcript)
 

@@ -10,6 +10,7 @@ export default function SceneAnalysisPage() {
   const [script, setScript] = useState('')
   const [loading, setLoading] = useState(false)
   const [analysis, setAnalysis] = useState<string | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -30,6 +31,7 @@ export default function SceneAnalysisPage() {
       } else {
         setAnalysis(data.analysis)
       }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars  
     } catch (err) {
       setError('Something went wrong.')
     }
