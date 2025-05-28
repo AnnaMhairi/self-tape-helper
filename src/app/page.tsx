@@ -60,7 +60,7 @@ export default function HomePage() {
     recognition.interimResults = true
     recognition.maxAlternatives = 1
 
-    recognition.onresult = (event) => {
+    recognition.onresult = (event: any) => {
       const transcript = event.results[event.resultIndex][0].transcript.trim()
       setLiveTranscription(transcript)
 
