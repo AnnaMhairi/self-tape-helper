@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "prebuild": "mkdir -p public/pdfjs-dist && cp node_modules/pdfjs-dist/build/pdf.worker.min.js public/pdfjs-dist/",
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
